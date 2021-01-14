@@ -70,26 +70,27 @@ directorynotexists(){
 
 listrepos(){
     [ -e "$datadir/$REPOS_FILE_NAME" ] || touch $datadir/$REPOS_FILE_NAME
-    sed 's/repo://g' $datadir/$REPOS_FILE_NAME | awk -F, '{ printf "%-19s %s\n", $1, $2 }'
+    sed 's/repo://g' $datadir/$REPOS_FILE_NAME | sed 's/,//g'
 }
 
 listpackages(){
     [ -e "$datadir/$PACKAGES_DIR_NAME" ] || mkdir -p $datadir/$PACKAGES_DIR_NAME
     [ -e "$repodir/$1" ] || error "Repo $1 does not exist"
     [ -e "$datadir/$PACKAGES_DIR_NAME/$1" ] || touch "$datadir/$PACKAGES_DIR_NAME/$1"
-    sed 's/pkg://g' $datadir/$PACKAGES_DIR_NAME/$1 | awk -F, '{ printf "%-19s %s\n", $1, $2 }'
+    for package_dir in `find $repodir/$repo -mindepth 2 -maxdepth 2 -type d -not -path '*/\.*/\.*'`
+    do
+        package=`basename $package_dir`
+        echo "$package, $([ -z "$(grep $package $datadir/$PACKAGES_DIR_NAME/$1)" ] && echo "inactive" || echo "active")"
+    done
 }
 
 clonerepo(){
     reponame=`basename $1 .git`
     [ -e "$repodir/$reponame" ] && error "Repo already exists."
     git clone --recursive --depth 1 "$1" "$repodir/$reponame" >/dev/null 2>&1
-    echo "$reponame,inactive" >> $datadir/$REPOS_FILE_NAME
+    echo "repo:$reponame," >> $datadir/$REPOS_FILE_NAME
     [ -e "$datadir/$PACKAGES_DIR_NAME" ] || mkdir -p $datadir/$PACKAGES_DIR_NAME
-    for package in `ls $repodir/$reponame`
-    do
-        [ -d "$repodir/$reponame/$package"] echo "$package,inactive" >> $datadir/$PACKAGES_DIR_NAME/$reponame
-    done
+    [ -f "$datadir/$PACKAGES_DIR_NAME/$reponame" ] || touch $datadir/$PACKAGES_DIR_NAME/$reponame
 }
 
 refresh() {
@@ -98,50 +99,35 @@ refresh() {
     do
         [ -f "$datadir/$REPOS_FILE_NAME" ] || touch "$datadir/$REPOS_FILE_NAME"
         repomatch="$(grep "repo:$repo," $datadir/$REPOS_FILE_NAME)"
-        test "${repomatch#*$repo}" != "$repomatch" || echo "repo:$repo,inactive" >> $datadir/$REPOS_FILE_NAME;
+        test "${repomatch#*$repo}" != "$repomatch" || echo "repo:$repo," >> $datadir/$REPOS_FILE_NAME;
         for package_dir in `find $repodir/$repo -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*/\.*'`
         do
             package=`basename "$package_dir"`
             [ -f "$datadir/$PACKAGES_DIR_NAME/$repo" ] || touch "$datadir/$PACKAGES_DIR_NAME/$repo"
-            packagematch="$(grep "pkg:$package," $datadir/$PACKAGES_DIR_NAME/$repo)"
-            test "${packagematch#*$package}" != "$packagematch" || echo "pkg:$package,inactive" >> $datadir/$PACKAGES_DIR_NAME/$repo
         done
     done
     echo "KNOWN BUG: packages that are deleted from the repo, will not be deleted here."
 }
-
-getactiverepo(){
-    return [ -d "$repodir/$1" ] && [[ "$(grep "repo:$1," $datadir/$REPOS_FILE_NAME | sed 's/\(.*\),\(.*\)/\2/g')" == "active" ]]
-}
-
 getactive(){
     repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
     package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    return [ -d "$repodir/$1" ] && [[ "$(grep "pkg:$package," "$datadir/$PACKAGES_DIR_NAME/$repo" | sed 's/\(.*\),\(.*\)/\2/g')" == "active" ]]
-}
-
-setactiverepo(){
-    [ -d "$repodir/$1" ] && sed "s/repo:$1,inactive/repo:$1,active/g" $datadir/$REPOS_FILE_NAME > $datadir/${REPOS_FILE_NAME}_new && cp $datadir/${REPOS_FILE_NAME}_new $datadir/${REPOS_FILE_NAME} && rm $datadir/${REPOS_FILE_NAME}_new || return 1
+    return [ -d "$repodir/$1" ] && [[ ! -z "$(grep "pkg:$package," "$datadir/$PACKAGES_DIR_NAME/$repo")" ]]
 }
 
 setactive(){
     repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
     package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    [ -d "$repodir/$1" ] && sed "s/pkg:$package,inactive/pkg:$package,active/g" $datadir/$PACKAGES_DIR_NAME/$repo > $datadir/$PACKAGES_DIR_NAME/${repo}_new && cp $datadir/$PACKAGES_DIR_NAME/${repo}_new $datadir/$PACKAGES_DIR_NAME/$repo && rm $datadir/$PACKAGES_DIR_NAME/${repo}_new || return 1
-}
-
-setinactiverepo(){
-    [ -d "$repodir/$1" ] && sed "s/repo:$1,active/repo:$1,inactive/g" $datadir/$REPOS_FILE_NAME > $datadir/${REPOS_FILE_NAME}_new && cp $datadir/${REPOS_FILE_NAME}_new $datadir/${REPOS_FILE_NAME} && rm $datadir/${REPOS_FILE_NAME}_new || return 1
+    [ -d "$repodir/$1" ] && [[ -z "$(grep "pkg:$package," "$datadir/$PACKAGES_DIR_NAME/$repo")" ]] && echo "pkg:$package," >> $datadir/$PACKAGES_DIR_NAME/$repo
 }
 
 setinactive(){
     repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
     package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    [ -d "$repodir/$1" ] && sed "s/pkg:$package,active/pkg:$package,inactive/g" $datadir/$PACKAGES_DIR_NAME/$repo > $datadir/$PACKAGES_DIR_NAME/${repo}_new && cp $datadir/$PACKAGES_DIR_NAME/${repo}_new $datadir/$PACKAGES_DIR_NAME/$repo && rm $datadir/$PACKAGES_DIR_NAME/${repo}_new || return 1
+    [ -d "$repodir/$1" ] && sed -i "s/pkg:$package,//g" $datadir/$PACKAGES_DIR_NAME/$repo || return 1
 }
 
 activatepackage(){
-    echo "active"
+    echo "Activating $1"
     repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
     package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
     err="$(stow -d "$repodir/$repo" -t "$stowtarget" -R "$package" 2>&1)"
@@ -156,10 +142,10 @@ activaterepo(){
         package=`basename "$package_path"`
         activatepackage "$1/$package" || failedpackage=1
     done
-    [ -z $failedpackage ] && setactiverepo "$1"
 }
 
 deactivatepackage(){
+    echo 1
     repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
     package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
     err="$(stow -d "$repodir/$repo" -t "$stowtarget" -D "$package" 2>&1)"
@@ -169,12 +155,12 @@ deactivatepackage(){
 }
 
 deactivaterepo(){
+    echo 1
     for package_path in ``find $repodir/$1 -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*/\.*'``
     do
         package=`basename "$package_path"`
         deactivatepackage "$1/$package" || failedpackage=1
     done
-    return [ -z $failedpackage ] && setinactiverepo "$1"
 }
 
 gethelp(){

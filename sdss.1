@@ -1,0 +1,87 @@
+.TH sdss 1 "14.01.2021" "VERSION"
+.SH NAME
+sdss \- stow dotfiles setup script
+.SH SYNOPSIS
+.B sdss
+[\fB\-c\fR \fIREPO\fR]
+[\fB\-a\fR \fIREPO/PACKAGE\fR]
+[\fB\-A\fR \fIREPO\fR]
+[\fB\-d\fR \fIREPO/PACKAGE\fR]
+[\fB\-D\fR \fIREPO\fR]
+[\fB\-l\fR \fIREPO\fR]
+[\fB\-L\fR]
+[\fB\-R\fR]
+[\fB\-r\fR \fIREPODIR\fR]
+[\fB\-s\fR \fIDATADIR\fR]
+.SH DESCRIPTION
+.PP
+.B sdss
+is a tool to manage the deployment of dotfiles with the use of GNU stow. The dotfiles are organized into packages inside of
+.I git
+repos and packages/repos can be activated/deactivated individually.
+.SH ARGUMENTS
+There are two different types of arguments you can give to
+.B sdss
+:
+.I commands
+and
+.I options
+\.
+.I Commands
+determine what
+.B sdss
+is supposed to do and only one can be given at a time. A command is required for sdss to work.
+.I Options
+determine separate variables when using sdss. You can use multiple options in conjunction with any command.
+.SH COMMANDS
+.TP
+.BR \-c " " \fIREPO\fR
+Clone a repo into the repo directory.
+.TP
+.BR \-a " " \fIREPO/PACKAGE\fR
+Activate a single package.
+.TP
+.BR \-A " " \fIREPO\fR
+Activate all packages inside of this repo.
+.TP
+.BR \-d " " \fIREPO/PACKAGE\fR
+Deactivate a single package.
+.TP
+.BR \-D " " \fIREPO\fR
+Deactivate all packages inside of this repo.
+.TP
+.BR \-l " " \fIREPO\fR
+List all packages inside of this repo. Also displays active status.
+.TP
+.BR \-L
+List all Repos.
+.TP
+.BR \-R
+Refresh the data inside the data directory. Useful if custom repos are introduced to the dotfiles directory or some other external change has been made. KNOWN BUG: deleted repos might not disappear from list commands after refresh.
+.SH OPTIONS
+.TP
+.BR \-r " " \fIREPODIR\fR
+Sets the repo directory.
+.TP
+.BR \-s " " \fIDATADIR\fR
+Sets the sdss data directory.
+.SH DETAILS
+.PP
+.B sdss
+stores the repos inside of
+.I ${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles
+or
+.I $HOME/.dotfiles
+in that precedence. If the first folder exists, the sesecond one will be ignored. Some additional data is stored inside of
+.I ${XDG_DATA_HOME:-$HOME/.local/share}/sdss
+or
+.I $HOME/.sdss
+in that precedence, similarly to the repo directory. The data stored here keeps track of which packages are activated.
+.PP
+The directory structure inside of the repo directory looks like this with
+.I ".dotfiles"
+being the repo directory):
+.I ".dotfiles/repo/package"
+\&. The content inside a package has to mirror the same folder structure that the package should have when installed into the home directory.
+.TP
+The data inside the data directory keeps track of activated packages for the purpose of listing them to the user.
