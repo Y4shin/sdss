@@ -163,6 +163,10 @@ deactivaterepo(){
     done
 }
 
+version(){
+    echo "sdss: VERSION" # VERSION will be replaced by make install
+}
+
 gethelp(){
     echo ""
     echo "Usage: $0 <command> [command_arg] [optargs]"
@@ -183,6 +187,7 @@ gethelp(){
     echo -e "\t   List all packages in repo."
     echo -e "\t-R Refresh package lists in repos."
     echo -e "\t-L List all repos."
+    echo -e "\t-v Print version of sdss."
     echo -e ""
     echo -e "Optinal arguments:"
     echo -e "\t-r <repodir>"
@@ -195,7 +200,7 @@ gethelp(){
 ### GETTING ARGS ###
 
 
-while getopts ":hr:s:c:a:A:d:D:l:LR" opt
+while getopts ":hvr:s:c:a:A:d:D:l:LR" opt
 do
     case "$opt" in
         h) gethelp;;
@@ -217,6 +222,8 @@ do
                    multiplecommands;; # lists all repos
         R) [ -z "$command" ] && command="refresh" ||
                    multiplecommands;; # lists all repos
+        v) [ -z "$command" ] && command="version" ||
+                   multiplecommands;;
         *) unknownarg $OPTARG;; #shows error message and exists with 1
     esac
 done
@@ -242,6 +249,7 @@ case "$command" in
     "refresh") refresh;;
     "listrepos") listrepos;;
     "listpackages") listpackages "$arg";;
+    "version") version;;
     *) error "INTERNAL: Function for command not yet implemented.";;
 esac
 
