@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env python3
 
 # Stow Dotfiles Setup Script (SDSS)
 # By Patric Plattner <patric@patricplattner.de>
@@ -7,249 +7,319 @@
 # This script manages dotfiles setups using GNU stow. It allows to mix and match
 # different dotfiles and handles on the fly switching.
 
+# IMPORTS
 
-### CONSTANTS ###
+import argparse
+import sys
+import os
+import socket
+import shutil
+import errno
 
-REPO_DIR_0="$SDSS_REPO_DIR"
-REPO_DIR_1="${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles"
-REPO_DIR_2="$HOME/.dotfiles"
+# CONSTANTS
 
-DATA_DIR_0="$SDSS_DATA_DIR"
-DATA_DIR_1="${XDG_DATA_HOME:-$HOME/.local/share}/sdss"
-DATA_DIR_2="$HOME/.sdss"
+# List of all commands.
+# Comprised of list of 4-tuples in format of:
+# (short-name, long-name, desc, dest, takes_argument)
+commands = [
+    ("-c", "--clone", "Clone dotfiles repo into repo folder", "clone_repo", 1),
+    ("-a", "--activate-package", "Activate single package out of a repo. Provide 2 arguments: <repo> <package>.", "a_package", 2),
+    ("-A", "--activate-repo", "Activate all packages out of a repo.", "a_repo", 1),
+    ("-d", "--deactivate-package", "Deactivate singele package out of a repo. Provide 2 arguments: <repo> <package>.", "d_package", 2),
+    ("-D", "--deactivate-repo", "Deactivate all packages out of a repo.", "d_repo", 1),
+    ("-l", "--list-packages", "Lists all packages in a repo.", "l_repo", 1),
+    ("-L", "--list-repos", "Lists all repos.", "l_repos", 0),
+    ("-V", "--change-version", "Change version of a package.", "change_version", 1),
+    ("-e", "--toggle-edit-mode", "Toggle edit mode.", "toggle:edit", 0),
+    ("-R", "--refresh", "Refreshes package database.", "refresh", 0),
+    ("-v", "--print-version", "Print version of sdss.", "version", 0),
+    ("-f", "--get-repos-location", "Get the folder which contains the repos.", "get_repo_folder", 0)
+]
 
-STOW_TARGET_DIR_0="$HOME"
+# GLOBAL VARS
 
-REPOS_FILE_NAME="repos"
-PACKAGES_DIR_NAME="packages"
-### FUNCTIONS ###
-
-warn() {
-    echo "WARN:$1" 1>&2
-}
-
-error() {
-    echo "ERRO:$1" 1>&2
-    exit 1
-}
-
-multiplecommands(){
-    echo "Only provide one command."
-    exit 1
-}
-
-unknownarg(){
-    echo "-$1 is a not know command/flag, or you forgot to provide an argument."
-    echo "Please refer to \"$0 -h\" or \"man sdss\""
-    exit 1
-}
-
-noargs(){
-    echo "Please provide an command. Check available commands with \"$0 -h\"."
-    exit 1
-}
-
-createrepodir(){
-    repodir=`dialog --menu "Selecto directory to store dotfile repos" 0 0 0 \
-        "$REPO_DIR_0" "" "$REPO_DIR_1" "" "$REPO_DIR_2" "" 3>&1 1>&2 2>&3 3>&1`
-    dialog --clear
-    mkdir -p $repodir
-}
-
-createdatadir(){
-    datadir=`dialog --menu "Select directory to store sdss data." 0 0 0 \
-        "$DATA_DIR_0" "" "$DATA_DIR_1" "" "$DATA_DIR_2" "" 3>&1 1>&2 2>&3 3>&1`
-    dialog --clear
-    mkdir -p $datadir
-}
-
-directorynotexists(){
-    echo "The directory $1 does not exist."
-    exit 1
-}
-
-listrepos(){
-    [ -e "$datadir/$REPOS_FILE_NAME" ] || touch $datadir/$REPOS_FILE_NAME
-    sed 's/repo://g' $datadir/$REPOS_FILE_NAME | sed 's/,//g'
-}
-
-listpackages(){
-    [ -e "$datadir/$PACKAGES_DIR_NAME" ] || mkdir -p $datadir/$PACKAGES_DIR_NAME
-    [ -e "$repodir/$1" ] || error "Repo $1 does not exist"
-    [ -e "$datadir/$PACKAGES_DIR_NAME/$1" ] || touch "$datadir/$PACKAGES_DIR_NAME/$1"
-    for package_dir in `find $repodir/$repo -mindepth 2 -maxdepth 2 -type d -not -path '*/\.*/\.*'`
-    do
-        package=`basename $package_dir`
-        echo "$package, $([ -z "$(grep $package $datadir/$PACKAGES_DIR_NAME/$1)" ] && echo "inactive" || echo "active")"
-    done
-}
-
-clonerepo(){
-    reponame=`basename $1 .git`
-    [ -e "$repodir/$reponame" ] && error "Repo already exists."
-    git clone --recursive --depth 1 "$1" "$repodir/$reponame" >/dev/null 2>&1
-    echo "repo:$reponame," >> $datadir/$REPOS_FILE_NAME
-    [ -e "$datadir/$PACKAGES_DIR_NAME" ] || mkdir -p $datadir/$PACKAGES_DIR_NAME
-    [ -f "$datadir/$PACKAGES_DIR_NAME/$reponame" ] || touch $datadir/$PACKAGES_DIR_NAME/$reponame
-}
-
-refresh() {
-    [ -d "$datadir/$PACKAGES_DIR_NAME" ] || mkdir "$datadir/$PACKAGES_DIR_NAME"
-    for repo in `ls "$repodir"`
-    do
-        [ -f "$datadir/$REPOS_FILE_NAME" ] || touch "$datadir/$REPOS_FILE_NAME"
-        repomatch="$(grep "repo:$repo," $datadir/$REPOS_FILE_NAME)"
-        test "${repomatch#*$repo}" != "$repomatch" || echo "repo:$repo," >> $datadir/$REPOS_FILE_NAME;
-        for package_dir in `find $repodir/$repo -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*/\.*'`
-        do
-            package=`basename "$package_dir"`
-            [ -f "$datadir/$PACKAGES_DIR_NAME/$repo" ] || touch "$datadir/$PACKAGES_DIR_NAME/$repo"
-        done
-    done
-    echo "KNOWN BUG: packages that are deleted from the repo, will not be deleted here."
-}
-getactive(){
-    repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
-    package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    return [ -d "$repodir/$1" ] && [[ ! -z "$(grep "pkg:$package," "$datadir/$PACKAGES_DIR_NAME/$repo")" ]]
-}
-
-setactive(){
-    repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
-    package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    [ -d "$repodir/$1" ] && [[ -z "$(grep "pkg:$package," "$datadir/$PACKAGES_DIR_NAME/$repo")" ]] && echo "pkg:$package," >> $datadir/$PACKAGES_DIR_NAME/$repo
-}
-
-setinactive(){
-    repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
-    package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    [ -d "$repodir/$1" ] && sed -i "s/pkg:$package,//g" $datadir/$PACKAGES_DIR_NAME/$repo || return 1
-}
-
-activatepackage(){
-    echo "Activating $1"
-    repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
-    package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    err="$(stow -d "$repodir/$repo" -t "$stowtarget" -R "$package" 2>&1)"
-    success=$?
-    [ $success -eq 0 ] && setactive "$1" || warn "Could not stow package $1: $err"
-    return $success
-}
-
-activaterepo(){
-    for package_path in `find $repodir/$1 -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*/\.*'`
-    do
-        package=`basename "$package_path"`
-        activatepackage "$1/$package" || failedpackage=1
-    done
-}
-
-deactivatepackage(){
-    echo 1
-    repo="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\1/g')"
-    package="$(echo $1 | sed 's/\(.*\)\/\(.*\)/\2/g')"
-    err="$(stow -d "$repodir/$repo" -t "$stowtarget" -D "$package" 2>&1)"
-    success=$?
-    [ $success -eq 0 ] && setinactive "$1" || warn "Could not un-stow package $1: $err"
-    return $success
-}
-
-deactivaterepo(){
-    echo 1
-    for package_path in ``find $repodir/$1 -mindepth 1 -maxdepth 1 -type d -not -path '*/\.*/\.*'``
-    do
-        package=`basename "$package_path"`
-        deactivatepackage "$1/$package" || failedpackage=1
-    done
-}
-
-version(){
-    echo "sdss: VERSION" # VERSION will be replaced by make install
-}
-
-gethelp(){
-    echo ""
-    echo "Usage: $0 <command> [command_arg] [optargs]"
-    echo ""
-    echo "Commands:"
-    echo -e "\t-h Show this message."
-    echo -e "\t-c <repo>"
-    echo -e "\t   Clone dotfiles repo into repo folder."
-    echo -e "\t-a <repo>/<package>"
-    echo -e "\t   Activate single package out of a repo."
-    echo -e "\t-A <repo>"
-    echo -e "\t   Activate all packages out of a repo."
-    echo -e "\t-d <repo>/<package>"
-    echo -e "\t   Deactivate single package out of a repo."
-    echo -e "\t-D <repo>"
-    echo -e "\t   Deactivate all packages out of a repo."
-    echo -e "\t-l <repo>"
-    echo -e "\t   List all packages in repo."
-    echo -e "\t-R Refresh package lists in repos."
-    echo -e "\t-L List all repos."
-    echo -e "\t-v Print version of sdss."
-    echo -e ""
-    echo -e "Optinal arguments:"
-    echo -e "\t-r <repodir>"
-    echo -e "\t   Custom directory for repositories"
-    echo -e "\t-s <sdssdatadir>"
-    echo -e "\t   Custom directory sdss config data"
-    exit 0
-}
-
-### GETTING ARGS ###
+SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR") is not None else "{}/.local/share/sdss".format(os.getenv("HOME"))
+SDSS_DEST_DIR = os.getenv("SDSS_DEST_DIR") if os.getenv("SDSS_DEST_DIR") is not None else os.getenv("HOME")
+SDSS_VER  = "VERSION"
+SDSS_EDIT_DIR = os.getenv("SDSS_EDIT_DIR") if os.getenv("SDSS_EDIT_DIR") is not None else "{}/dotfiles".format(os.getenv("HOME"))
 
 
-while getopts ":hvr:s:c:a:A:d:D:l:LR" opt
-do
-    case "$opt" in
-        h) gethelp;;
-        r) [ -e $OPTARG ] && repodir="$OPTARG" || directorynotexists "$OPTARG";;
-        s) [ -e $OPTARG ] && datadir="$OPTARG" || directorynotexists "$OPTARG";;
-        c) [ -z "$command" ] && command="clone" && arg="$OPTARG" ||
-                   multiplecommands;; # clones new dotfiles repo
-        a) [ -z "$command" ] && command="activatepackage" && arg="$OPTARG" ||
-                   multiplecommands;; # activate single package
-        A) [ -z "$command" ] && command="activaterepo" && arg="$OPTARG" ||
-                   multiplecommands;; # activate all packages in repo
-        d) [ -z "$command" ] && command="deactivatepackage" && arg="$OPTARG" ||
-                   multiplecommands;; # deactivate all packages in repo
-        D) [ -z "$command" ] && command="deactivaterepo" && arg="$OPTARG" ||
-                   multiplecommands;; # deactivate single package
-        l) [ -z "$command" ] && command="listpackages" && arg="$OPTARG" ||
-                   multiplecommands;; # lists all packages in repo
-        L) [ -z "$command" ] && command="listrepos" ||
-                   multiplecommands;; # lists all repos
-        R) [ -z "$command" ] && command="refresh" ||
-                   multiplecommands;; # lists all repos
-        v) [ -z "$command" ] && command="version" ||
-                   multiplecommands;;
-        *) unknownarg $OPTARG;; #shows error message and exists with 1
-    esac
-done
+# HOUSEKEEPING FUNCTIONS
 
-[ -z "$command" ] && noargs # shows error message and exits with 1
-# set repodir and datadir according to priority and create one if necessary
-[ -z "$repodir" ] && [ -e "$REPO_DIR_0" ] && repodir="$REPO_DIR_0"
-[ -z "$repodir" ] && [ -e "$REPO_DIR_1" ] && repodir="$REPO_DIR_1"
-[ -z "$repodir" ] && [ -e "$REPO_DIR_2" ] && repodir="$REPO_DIR_2"
-[ -z "$repodir" ] && createrepodir
-[ -z "$datadir" ] && [ -e "$DATA_DIR_0" ] && datadir="$DATA_DIR_0"
-[ -z "$datadir" ] && [ -e "$DATA_DIR_1" ] && datadir="$DATA_DIR_1"
-[ -z "$datadir" ] && [ -e "$DATA_DIR_2" ] && datadir="$DATA_DIR_2"
-[ -z "$datadir" ] && createdatadir
-stowtarget=$STOW_TARGET_DIR_0
+def getargs():
+    parser = argparse.ArgumentParser(description="Stow Dotfiles Setup Script (SDSS). Please only provide one command at a time.")
+    for command in commands:
+        if command[0] is not None:
+            if command[4] > 0:
+                parser.add_argument(command[0], command[1], help=command[2], dest=command[3], nargs=command[4])
+            else:
+                parser.add_argument(command[0], command[1], help=command[2], action="store_true", dest=command[3])
+        else:
+            if command[4] > 0:
+                parser.add_argument(command[1], help=command[2], dest=command[3], nargs=command[4])
+            else:
+                parser.add_argument(command[1], help=command[2], action="store_true", dest=command[3])
+    return parser.parse_args()
 
-case "$command" in
-    "clone") clonerepo "$arg";;
-    "activatepackage") activatepackage "$arg";;
-    "activaterepo") activaterepo "$arg";;
-    "deactivatepackage") deactivatepackage "$arg";;
-    "deactivaterepo") deactivaterepo "$arg";;
-    "refresh") refresh;;
-    "listrepos") listrepos;;
-    "listpackages") listpackages "$arg";;
-    "version") version;;
-    *) error "INTERNAL: Function for command not yet implemented.";;
-esac
+def get_command(args):
+    activated_command = None
+    args_dict = vars(args)
+    for com in commands:
+        command = com[3]
+        if args_dict[command] is not None and (args_dict[command] == True or isinstance(args_dict[command], str) or isinstance(args_dict[command], list)):
+            if activated_command is None:
+                activated_command = (command, args_dict[command])
+            else:
+                sys.stderr.write("Only provide one command at a time.\n")
+                sys.exit(1)
+    return activated_command
 
+
+# COMMAND FUNCTIONS
+
+def refresh():
+    #getting current dotfile version
+    current_version = "default"
+    if not os.path.isfile(os.path.join(SDSS_DATA_DIR, "sdss.conf")):
+        with open(os.path.join(SDSS_DATA_DIR, "sdss.conf"), "w") as conffile:
+            conffile.write("version={},edit=inactive\n".format(current_version))
+    else:
+        with open(os.path.join(SDSS_DATA_DIR, "sdss.conf"), "r") as conffile:
+            for line in conffile.readlines():
+                if line.split("=")[0] == "version":
+                    current_version = line.split("=")[1].replace("\n", "")
+    #getting all repos, appending full pathname and filtering only directories
+    repos = [os.path.join(SDSS_DATA_DIR, "repos", name) for name in os.listdir(os.path.join(SDSS_DATA_DIR, "repos")) if os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", name))]
+    for repo in repos:
+        #getting packages of repo, filtering for dotfiles and non-folders
+        packages = [os.path.join(repo, name) for name in os.listdir(repo) if os.path.isdir(os.path.join(repo, name)) and name[0] != "."]
+        for package in packages:
+            #generating initial sdss.data if not existent (aka initializing
+            if not os.path.isfile(os.path.join(package, "sdss.data")):
+                with open(os.path.join(package, "sdss.data"), "w") as package_data:
+                    package_data.write("name={}\nstate=inactive\n".format(
+                        package.split("/")[-1]))
+            try:
+                os.mkdir(os.path.join(package, "deploy"))
+            except FileExistsError:
+                pass
+            #walking over all data files and add sdss.data entries.
+            known_files = []
+            with open(os.path.join(package, "sdss.data"), "r") as package_data:
+                for line in package_data.readlines():
+                    key = line.split("=")[0]
+                    data = line.split("=")[1]
+                    if key == "file" or key == "dir":
+                        known_files.append(data[:-1])
+                    elif key[:3] == "alt":
+                        known_files.append(data[:-1]+".{}.sdss".format(key.split(".")[1]))
+            for root, dirs, files in os.walk(os.path.join(package, "data")):
+                for entry in dirs+files:
+                    #do not add duplicate entries
+                    if os.path.join(root, entry) in known_files:
+                        continue
+                    #add dir entry to sdss.data
+                    if os.path.isdir(os.path.join(root, entry)):
+                        with open(os.path.join(package, "sdss.data"), "a+") as package_data:
+                            package_data.write("dir={}\n".format(os.path.join(root, entry)))
+                    #handle versioned file.
+                    elif entry[-5:] == ".sdss":
+                        with open(os.path.join(package, "sdss.data"), "a+") as package_data:
+                            #determine if version is supposed to be active and write to sdss.data accordingly
+                            if entry.split(".")[-2] == current_version:
+                                package_data.write("alt.{}.active={}\n".format(
+                                    current_version,
+                                    os.path.join(root, entry.split(".")[0])))
+                            else:
+                                package_data.write("alt.{}.inactive={}\n".format(
+                                    entry.split(".")[-2],
+                                    os.path.join(root, entry.split(".")[0])))
+                    #add regular file to sdss.data
+                    else:
+                        with open(os.path.join(package, "sdss.data"), "a+") as package_data:
+                            package_data.write("file={}\n".format(os.path.join(root, entry)))
+            #reading lines from sdss.data and filling them into new_lines with needed changes
+            new_lines = []
+            #if file already exists, then old version is still in place and if
+            #it is overwritten now, the new file will be deleted when the
+            #overwritten file will be handled, so they will be saved as XXX.tmp
+            #and renamed once all files were handled.
+            tmp_files = []
+            #if already active, then it will be restowed so changes are
+            #propagated to SDSS_DEST_DIR
+            restow = False
+            #ugly hack to prevent python weirdness of not copying anything
+            #while in `with open(...) as file` block.
+            cpyqueue = []
+            with open(os.path.join(package, "sdss.data"), "r") as package_data:
+                for line in package_data.readlines():
+                    key = line.split("=")[0]
+                    data = line.split("=")[1].replace("\n", "")
+                    #handle versioned file
+                    if key.split(".")[0] == "alt":
+                        if not os.path.isfile(data+".{}.sdss".format(key.split(".")[1])):
+                            continue
+                        #disable versioned file if version does not match anymore
+                        if key.split(".")[1] != current_version:
+                            if os.path.isfile(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)):
+                                os.remove(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            new_lines.append(key.split(".")[0] + "." + key.split(".")[1] + ".inactive=" + data)
+                        #reenable if version matches again
+                        else:
+                            #see comment on `tmp_files = []`
+                            if os.path.isfile(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)):
+                                #this hack is ugly as hell, but it won't copy otherwise.
+                                cpyqueue.append(("{}.{}.sdss".format(data, key.split(".")[1]), "{}..tmp".format(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))))
+                                tmp_files.append(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)+"..tmp")
+                            else:
+                                src=data + ".{}.sdss".format(key.split(".")[1])
+                                dst=data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)
+                                cpyqueue.append((src, dst))
+                            new_lines.append(key.split(".")[0] + "." + key.split(".")[1] + ".active" + "=" + data)
+                    #handle directory
+                    elif key == "dir":
+                        if os.path.isfile(data):
+                            shutil.rmtree(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            cpyqueue.append((data, data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)))
+                            new_lines.append("file="+line.split("=")[1])
+                        elif not os.path.isdir(data):
+                            shutil.rmtree(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                        else:
+                            try:
+                                os.mkdir(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            except FileExistsError:
+                                pass
+                            new_lines.append(line)
+                    #handle file
+                    elif key == "file":
+                        if os.path.isdir(data):
+                            os.remove(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            os.mkdir(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            new_lines.append("dir="+line.split("=")[1])
+                        elif not os.path.isfile(data):
+                            try:
+                                os.remove(data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1))
+                            except FileNotFoundError:
+                                pass
+                        else:
+                            src=data
+                            dst=data.replace(os.path.join(package, "data"), os.path.join(package, "deploy"), 1)
+                            cpyqueue.append((src, dst))
+                            new_lines.append(line)
+                    #check whether restow is needed
+                    elif key == "state":
+                        if data == "active":
+                            restow = True
+                        new_lines.append(line)
+            #actually copy stuff
+            for cmd in cpyqueue:
+                shutil.copy2(cmd[0], cmd[1])
+            #undo XXX.tmp workaround
+            for tmp_file in tmp_files:
+                os.rename(tmp_file, tmp_file[:-5])
+            #write changes to active file
+            with open(os.path.join(package, "sdss.data"), "w") as wfile:
+                for line in new_lines:
+                    wfile.write(line)
+                    if line[-1] != "\n":
+                        wfile.write("\n")
+            if restow:
+                success = os.system("stow -S {} -d {} -t {} >/dev/null 2>&1".format("data", package_dir, SDSS_DEST_DIR))
+
+def clone(arg):
+    os.chdir(os.path.join(SDSS_DATA_DIR, "repos"))
+    if os.system("git clone {}".format(arg[0])) == 0:
+        print("Successfully cloned repo. Please refresh to initialize the repo for use.")
+    else:
+        print("Could not clone repo.")
+
+def activate_package(arg):
+    package_dir = os.path.join(SDSS_DATA_DIR, "repos", arg[0], arg[1])
+    success=False
+    with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+        #check if active
+        if [line for line in config_file.readlines() if line.split("=")[0] == "state"][0].split("=")[1][:-1] == "inactive":
+            success = os.system("stow -S {} -d {} -t {}".format("deploy", package_dir, SDSS_DEST_DIR)) == 0
+    if success:
+        text = ""
+        with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+            text = config_file.read().replace("state=inactive", "state=active")
+        with open(os.path.join(package_dir, "sdss.data"), "w") as config_file:
+            config_file.write(text)
+        print("Package {}/{} successfully activated.".format(arg[0], arg[1]))
+    else:
+        print("Package {}/{} failed to activate.".format(arg[0], arg[1]))
+
+def activate_repo(arg):
+    for package in [pkg for pkg in os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0], pkg)) and pkg[0] != "."]:
+        activate_package([arg[0], package])
+
+def deactivate_package(arg):
+    package_dir = os.path.join(SDSS_DATA_DIR, "repos", arg[0], arg[1])
+    success=False
+    with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+        #check if active
+        if [line for line in config_file.readlines() if line.split("=")[0] == "state"][0].split("=")[1][:-1] == "active":
+            success = os.system("stow -D {} -d {} -t {}".format("deploy", package_dir, SDSS_DEST_DIR)) == 0
+    if success:
+        text = ""
+        with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+            text = config_file.read().replace("state=active", "state=inactive")
+        with open(os.path.join(package_dir, "sdss.data"), "w") as config_file:
+            config_file.write(text)
+        print("Package {}/{} successfully deactivated.".format(arg[0], arg[1]))
+    else:
+        print("Package {}/{} failed to deactivate.".format(arg[0], arg[1]))
+
+def deactivate_repo(arg):
+    for package in [pkg for pkg in os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0], pkg)) and pkg[0] != "."]:
+        deactivate_package([arg[0], package])
+
+def list_packages(arg):
+    for package in [pkg for pkg in os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0], pkg)) and pkg[0] != "."]:
+        print(package)
+
+def list_repos():
+    for repo in [pkg for pkg in os.listdir(os.path.join(SDSS_DATA_DIR, "repos")) if os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0], pkg)) and pkg[0] != "."]:
+        print(repo)
+
+def version():
+    print("sdss {}".format(SDSS_VER))
+
+def change_version(arg):
+    print("Change Package Version not yet implemented")
+
+def get_repo_folder():
+    sys.stdout.write(os.path.join(SDSS_DATA_DIR, "repos"))
+
+if __name__ == "__main__":
+    args = getargs()
+    comm = get_command(args)
+    if comm is None:
+        sys.stderr.write("Please provide a command.")
+        sys.exit(1)
+    command, arg = comm
+    if command == "refresh":
+        refresh()
+    elif command == "clone_repo":
+        clone(arg)
+    elif command == "a_package":
+        activate_package(arg)
+    elif command == "a_repo":
+        activate_repo(arg)
+    elif command == "d_package":
+        deactivate_package(arg)
+    elif command == "d_repo":
+        deactivate_repo(arg)
+    elif command == "l_repo":
+        list_packages(arg)
+    elif command == "l_repos":
+        list_repos()
+    elif command == "version":
+        version()
+    elif command == "change_version":
+        change_version(arg)
+    elif command == "toggle_edit":
+        toggle_edit()
+    elif command == "get_repo_folder":
+        get_repo_folder()
