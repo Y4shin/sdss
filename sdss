@@ -33,7 +33,8 @@ commands = [
     ("-e", "--toggle-edit-mode", "Toggle edit mode.", "toggle:edit", 0),
     ("-R", "--refresh", "Refreshes package database.", "refresh", 0),
     ("-v", "--print-version", "Print version of sdss.", "version", 0),
-    ("-f", "--get-repos-location", "Get the folder which contains the repos.", "get_repo_folder", 0)
+    ("-f", "--get-repos-location", "Get the folder which contains the repos.", "get_repo_folder", 0),
+    ("-F", "--get-package-location", "Get the working folder of a package. Provice 2 arguments: <repo> <package>.", "get_package_folder", 2)
 ]
 
 # GLOBAL VARS
@@ -129,11 +130,11 @@ def refresh():
                             if entry.split(".")[-2] == current_version:
                                 package_data.write("alt.{}.active={}\n".format(
                                     current_version,
-                                    os.path.join(root, entry.split(".")[0])))
+                                    os.path.join(root, ".".join(entry.split(".")[:-2]))))
                             else:
                                 package_data.write("alt.{}.inactive={}\n".format(
                                     entry.split(".")[-2],
-                                    os.path.join(root, entry.split(".")[0])))
+                                    os.path.join(root, ".".join(entry.split(".")[:-2]))))
                     #add regular file to sdss.data
                     else:
                         with open(os.path.join(package, "sdss.data"), "a+") as package_data:
@@ -224,7 +225,7 @@ def refresh():
                     if line[-1] != "\n":
                         wfile.write("\n")
             if restow:
-                success = os.system("stow -S {} -d {} -t {} >/dev/null 2>&1".format("data", package_dir, SDSS_DEST_DIR))
+                success = os.system("stow -S {} -d {} -t {} >/dev/null 2>&1".format("deploy", package, SDSS_DEST_DIR))
 
 def clone(arg):
     os.chdir(os.path.join(SDSS_DATA_DIR, "repos"))
@@ -292,6 +293,9 @@ def change_version(arg):
 def get_repo_folder():
     sys.stdout.write(os.path.join(SDSS_DATA_DIR, "repos"))
 
+def get_package_folder(arg):
+    sys.stdout.write(os.path.join(SDSS_DATA_DIR, "repos", arg[0], arg[1], "data"))
+
 if __name__ == "__main__":
     args = getargs()
     comm = get_command(args)
@@ -323,3 +327,5 @@ if __name__ == "__main__":
         toggle_edit()
     elif command == "get_repo_folder":
         get_repo_folder()
+    elif command == "get_package_folder":
+        get_package_folder(arg)
