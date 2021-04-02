@@ -15,6 +15,9 @@ import os
 import socket
 import shutil
 import errno
+import pathlib
+from datetime import datetime as dt
+import gnupg
 
 # CONSTANTS
 
@@ -63,8 +66,12 @@ commands = [
      "<repo> <package>.", "get_package_folder", 2)
 ]
 
+SDSS_REPO_DIR_NAME  = "repos"
+SDSS_DATA_FILE_NAME = "sdss.data"
+
 # GLOBAL VARS
 
+# TODO: Implement XDG Directories (aka XDG_DATA_HOME)
 SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR")\
   is not None else "{}/.local/share/sdss".format(os.getenv("HOME"))
 SDSS_DEST_DIR = os.getenv("SDSS_DEST_DIR") if os.getenv("SDSS_DEST_DIR")\
@@ -73,7 +80,16 @@ SDSS_EDIT_DIR = os.getenv("SDSS_EDIT_DIR") if os.getenv("SDSS_EDIT_DIR")\
   is not None else "{}/dotfiles".format(os.getenv("HOME"))
 SDSS_VER  = "VERSION"
 
+# CUSTOM EXCEPTIONS
 
+class GPGException(Exception):
+    pass
+
+class GPGDecException(GPGException):
+    pass
+
+class GPGEncException(GPGException):
+    pass
 # HOUSEKEEPING FUNCTIONS
 
 def getargs():
@@ -291,23 +307,118 @@ def refresh_deploy_files(package, data_folder, data_file,
         success = os.system("stow -S {} -d {} -t {} >/dev/null 2>&1".format(
           "deploy", package, SDSS_DEST_DIR))
 
+def dec_file(secret_file_enc, secret_file_dec, gpg):
+    with open(secret_file_enc, "r") as enc_file:
+        lines = enc_file.readlines()
+        key_id = lines[0][:-1]
+        enc_content = "".join(lines[1:])
+        dec_crypto = gpg.decrypt(enc_content)
+        if not dec_crypto.ok:
+            raise GPGDecException(dec_crypto.status)
+        dec_content = dec_crypto.data
+        with open(secret_file_dec, "w") as dec_file:
+            dec_file.write(key_id + "\n" + dec_content.decode("ascii"))
+
+def enc_file(secret_file_enc, secret_file_dec, gpg):
+    with open(secret_file_dec, "r") as dec_file:
+        lines = dec_file.readlines()
+        key_id = lines[0][:-1]
+        dec_content = "".join(lines[1:])
+        enc_crypto = gpg.encrypt(dec_content, key_id)
+        if not enc_crypto.ok:
+            raise GPGEncException(enc_crypto.status)
+        enc_content = enc_crypto.data
+        with open(secret_file_enc, "w") as enc_file:
+            enc_file.write(key_id + "\n" + enc_content.decode("ascii"))
+
+def update_secrets_files(secret_file_enc, secret_file_dec):
+    gpg = gnupg.GPG()
+    secret_enc_path = pathlib.Path(secret_file_enc)
+    secret_dec_path = pathlib.Path(secret_file_dec)
+    if os.path.isfile(secret_enc_path):
+        # encrypted and decrypted file exist: sync the contents using the more
+        # up-to-date version (fetched from last modified date of file via stat)
+        if os.path.isfile(secret_dec_path):
+            enc_timestamp = dt.fromtimestamp(secret_enc_path.stat().st_mtime)
+            dec_timestamp = dt.fromtimestamp(secret_dec_path.stat().st_mtime)
+            if enc_timestamp > dec_timestamp:
+                dec_file(secret_file_enc, secret_file_dec, gpg)
+            elif enc_timestamp < dec_timestamp:
+                enc_file(secret_file_enc, secret_file_dec, gpg)
+        # encrypted file exists, but decrypted does not. decrypting
+        # encrypted file
+        else:
+            dec_file(secret_file_enc, secret_file_dec, gpg)
+    else:
+        # decrypted file exists, but encrypted does not. encrypting
+        # decrypted file
+        if os.path.isfile(secret_dec_path):
+            enc_file(secret_file_enc, secret_file_dec, gpg)
+        else:
+          return False
+    return True
+
+def get_patches(segment):
+    lines = segment.split("\n")
+    filename = lines[0]
+    key_value_strings = []
+    cur_string = ""
+    for line in lines[1:]:
+        if line == "":
+            continue
+        elif line[-1] =="\\":
+            cur_string += line[:-1] + "\n"
+        else:
+            cur_string += line
+            key_value_strings.append(cur_string)
+            cur_string = ""
+    result_pairs = []
+    for pair in key_value_strings:
+        pair_arr = pair.split("=")
+        key = pair_arr[0]
+        value = "=".join(pair_arr[1:])
+        result_pairs.append((key, value))
+    return (filename, result_pairs)
+
+def apply_secret_file(secret_file_dec, data_folder, deploy_folder):
+    # list of patches to apply to files.
+    # content format:
+    # {filename: [(key1, val1), (key2, val2)]}
+    patches = {}
+    with open(secret_file_dec, "r") as sec_file:
+        file_segments = sec_file.read().split("###")
+        for segment in file_segments[1:]:
+            cur_patches = get_patches(segment)
+            patches[cur_patches[0]] = cur_patches[1]
+    for filename in patches:
+        src_file_path = os.path.join(data_folder,   filename)
+        dst_file_path = os.path.join(deploy_folder, filename)
+        with open(src_file_path, "r") as src_file:
+            content = src_file.read()
+            for patch in patches[filename]:
+                content = content.replace(patch[0], patch[1])
+            with open(dst_file_path, "w") as dst_file:
+                dst_file.write(content)
+
 # COMMAND FUNCTIONS
 
 def refresh():
     #getting current dotfile version
     current_version = get_version()
     #getting all repos, appending full pathname and filtering only directories
-    repos = [os.path.join(SDSS_DATA_DIR, "repos", name) for name in\
-             os.listdir(os.path.join(SDSS_DATA_DIR, "repos")) if\
-             os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", name))]
+    repos = [os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, name) for name in\
+             os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME)) if\
+             os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, name))]
     for repo in repos:
         #getting packages of repo, filtering for dotfiles and non-folders
         packages = [os.path.join(repo, name) for name in os.listdir(repo) if\
                     os.path.isdir(os.path.join(repo, name)) and name[0] != "."]
         for package in packages:
-            data_file     = os.path.join(package, "sdss.data")
-            data_folder   = os.path.join(package, "data")
-            deploy_folder = os.path.join(package, "deploy")
+            data_file       = os.path.join(package, SDSS_DATA_FILE_NAME)
+            data_folder     = os.path.join(package, "data")
+            deploy_folder   = os.path.join(package, "deploy")
+            secret_file_enc = os.path.join(package, "sdss.secret.enc")
+            secret_file_dec = os.path.join(package, "sdss.secret")
             #generating initial sdss.data if not existent (aka initializing
             init_repo_files(data_file, deploy_folder, package)
             #walking over all data files and add sdss.data entries.
@@ -316,10 +427,12 @@ def refresh():
                              known_files, current_version)
             refresh_deploy_files(package, data_folder, data_file,
                                  deploy_folder, current_version)
+            if update_secrets_files(secret_file_enc, secret_file_dec):
+                apply_secret_file(secret_file_dec, data_folder, deploy_folder)
 
 
 def clone(arg):
-    os.chdir(os.path.join(SDSS_DATA_DIR, "repos"))
+    os.chdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME))
     if os.system("git clone {}".format(arg[0])) == 0:
         print("Successfully cloned repo. Please refresh to initialize the repo\
         for use.")
@@ -327,9 +440,9 @@ def clone(arg):
         print("Could not clone repo.")
 
 def activate_package(arg):
-    package_dir = os.path.join(SDSS_DATA_DIR, "repos", arg[0], arg[1])
+    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0], arg[1])
     success=False
-    with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
         #check if active
         if [line for line in config_file.readlines() if\
             line.split("=")[0] == "state"][0].split("=")[1][:-1] == "inactive":
@@ -337,9 +450,9 @@ def activate_package(arg):
               "deploy", package_dir, SDSS_DEST_DIR)) == 0
     if success:
         text = ""
-        with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
             text = config_file.read().replace("state=inactive", "state=active")
-        with open(os.path.join(package_dir, "sdss.data"), "w") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w") as config_file:
             config_file.write(text)
         print("Package {}/{} successfully activated.".format(arg[0], arg[1]))
     else:
@@ -347,15 +460,15 @@ def activate_package(arg):
 
 def activate_repo(arg):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
         activate_package([arg[0], package])
 
 def deactivate_package(arg):
-    package_dir = os.path.join(SDSS_DATA_DIR, "repos", arg[0], arg[1])
+    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0], arg[1])
     success=False
-    with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
         #check if active
         if [line for line in config_file.readlines() if\
             line.split("=")[0] == "state"][0].split("=")[1][:-1] == "active":
@@ -363,9 +476,9 @@ def deactivate_package(arg):
                 "deploy", package_dir, SDSS_DEST_DIR)) == 0
     if success:
         text = ""
-        with open(os.path.join(package_dir, "sdss.data"), "r") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
             text = config_file.read().replace("state=active", "state=inactive")
-        with open(os.path.join(package_dir, "sdss.data"), "w") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w") as config_file:
             config_file.write(text)
         print("Package {}/{} successfully deactivated.".format(arg[0], arg[1]))
     else:
@@ -373,22 +486,22 @@ def deactivate_package(arg):
 
 def deactivate_repo(arg):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
         deactivate_package([arg[0], package])
 
 def list_packages(arg):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
         print(package)
 
 def list_repos():
     for repo in [pkg for pkg in\
-                 os.listdir(os.path.join(SDSS_DATA_DIR, "repos")) if\
-                 os.path.isdir(os.path.join(SDSS_DATA_DIR, "repos", arg[0],
+                 os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME)) if\
+                 os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
                                             pkg)) and pkg[0] != "."]:
         print(repo)
 
@@ -399,10 +512,10 @@ def change_version(arg):
     print("Change Package Version not yet implemented")
 
 def get_repo_folder():
-    sys.stdout.write(os.path.join(SDSS_DATA_DIR, "repos"))
+    sys.stdout.write(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME))
 
 def get_package_folder(arg):
-    sys.stdout.write(os.path.join(SDSS_DATA_DIR, "repos", arg[0],
+    sys.stdout.write(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
                                   arg[1], "data"))
 
 if __name__ == "__main__":
