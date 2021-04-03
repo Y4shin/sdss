@@ -1,0 +1,124 @@
+.TH sdss 5 "03.04.2021" "CUR_VERSION"
+.SH NAME
+.B sdss
+data directory \- $SDSS_DATA_DIR or
+${XDG_DATA_HOME:-$HOME/.local/share}/sdss
+.SH SYNOPSIS
+Data directory for
+.BR \%sdss (1)
+.SH DESCRIPTION
+This directory contains all repositories and packages for
+.B sdss
+and their respective configurations. This directory does not hold any global
+persistent configurations for
+.BR \%sdss (1)
+\&.
+.SH LAYOUT
+.PP
+The folder contains the
+.B sdss.conf
+file and the
+.B repos
+directory. The
+.B sdss.conf
+file contains the currently active version for the versioned files. The file can
+be manipulated by
+.BR \%sdss (5)
+and it only contains the following line
+.PP
+.EX
+version=CURRENT_VERSION
+.EE
+.PP
+The
+.B repos
+folder contains all repositories, which in turn contain their packages. Each
+non hidden folder within a repo represents a package. Any files in the root of a
+repo will be ignored.
+.PP
+Inside of a package is a
+.B data
+folder. That folder contains all files that are to be deployed to the
+destination folder. These files should be in the same directory structure as you
+intend to deploy them.
+.PP
+Versioned files inside of the
+.B data
+folder are handled by appending
+.I .version_name.sdss
+at the end of the filename, replacing version_name with the actual name of the
+version. You can then keep multiple versions of that file with different version
+names.
+.PP
+You can create a
+.B sdss.secret
+file at the root directory of a package (next to the
+.B data
+folder) that contains secret information that
+.BR \%sdss (1)
+should insert into the deployed files. Calling
+.B sdss\ \-R
+creates the encrypted
+.B sdss.secret.enc
+file.
+.PP
+The
+.B sdss.secret
+file should be Formatted as follows: The first line should contain the ID of the
+GPG key that you want to encrypt the file with. The next line should begin with
+"###" followed by the name of the file, into which you want to insert secret
+phrases, so for example ".config/dunst/dunstrc". You should not insert any
+whitespace between the "###" and the filename. the following lines are
+key-value-pairs, separated by a "=". If the value contains a newline, end any
+lines with newlines that you want to insert with a "\\" If you want to add more
+files with their own key-value-pairs, insert another "###" line and write the
+key-value-pairs below that line. Here is an example for an
+.B sdss.secret
+file:
+.PP
+.EX
+john@doe.com
+###.config/dunst/dunstrc
+KEY=value
+KEY2=value=test
+MULTI_LINE=multi line\\
+value
+###.config/mopidy/mopidy.conf
+SPOTIFY_LOGIN=login
+SPOTIFY_PASSWORD=passwd
+.EE
+.PP
+This example configuration would replace any occurence of "KEY" inside of the
+.I .config/dunst/dunstrc
+file with "value". All the other key-value-pairs will also be replaced.
+MULTI_LINE is an example for an multi line value.
+.PP
+Using all of the information given,
+.BR \%sdss (1)
+creates an
+.B deploy
+folder int which it copies and edits all the files that should be symlinked into
+the destination folder by
+.BR \%stow (1)
+\&.
+.BR \%sdss (1)
+also creates a
+.B sdss.data
+file. Both the
+.B deploy
+folder and the
+.B sdss.data
+file are not meant to be edited by users.
+.PP
+As
+.BR \%sdss (1)
+creates multiple files and folders inside of the package and therefore git repo,
+it is advised to create a
+.B .gitignore
+file with the following contents:
+.PP
+.EX
+*deploy
+*sdss.secret
+*sdss.data
+.EE

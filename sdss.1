@@ -1,87 +1,113 @@
-.TH sdss 1 "14.01.2021" "VERSION"
+.TH sdss 1 "03.04.2021" "CUR_VERSION"
 .SH NAME
 sdss \- stow dotfiles setup script
 .SH SYNOPSIS
 .B sdss
-[\fB\-c\fR \fIREPO\fR]
-[\fB\-a\fR \fIREPO/PACKAGE\fR]
-[\fB\-A\fR \fIREPO\fR]
-[\fB\-d\fR \fIREPO/PACKAGE\fR]
-[\fB\-D\fR \fIREPO\fR]
-[\fB\-l\fR \fIREPO\fR]
-[\fB\-L\fR]
-[\fB\-R\fR]
-[\fB\-r\fR \fIREPODIR\fR]
-[\fB\-s\fR \fIDATADIR\fR]
+.I command
+.I args
 .SH DESCRIPTION
 .PP
 .B sdss
-is a tool to manage the deployment of dotfiles with the use of GNU stow. The dotfiles are organized into packages inside of
+is a tool to manage the deployment of dotfiles with the use of GNU stow.
+The dotfiles are organized into packages inside of
 .I git
 repos and packages/repos can be activated/deactivated individually.
+.B sdss
+also handles switching file versions and encrypting passwords and such.
 .SH ARGUMENTS
-There are two different types of arguments you can give to
 .B sdss
-:
-.I commands
-and
-.I options
-\.
-.I Commands
-determine what
-.B sdss
-is supposed to do and only one can be given at a time. A command is required for sdss to work.
-.I Options
-determine separate variables when using sdss. You can use multiple options in conjunction with any command.
+takes exactly one
+.I command
+and the appropriate amount of arguments for the given
+.I command
+\&.
 .SH COMMANDS
 .TP
-.BR \-c " " \fIREPO\fR
+.BR [\-c, " " \-\-clone] " " \fIREPO\fR
 Clone a repo into the repo directory.
 .TP
-.BR \-a " " \fIREPO/PACKAGE\fR
+.BR [\-a, " " \-\-activate\-package] " " \fIREPO\fR " " \fIPACKAGE\fR
 Activate a single package.
 .TP
-.BR \-A " " \fIREPO\fR
+.BR [\-A, " " \-\-activate\-repo] " " \fIREPO\fR
 Activate all packages inside of this repo.
 .TP
-.BR \-d " " \fIREPO/PACKAGE\fR
+.BR [\-d, " " \-\-deactivate\-package] " " \fIREPO\fR " " \fIPACKAGE\fR
 Deactivate a single package.
 .TP
-.BR \-D " " \fIREPO\fR
+.BR [\-D, " " \-\-deactivate\-repo] " " \fIREPO\fR
 Deactivate all packages inside of this repo.
 .TP
-.BR \-l " " \fIREPO\fR
-List all packages inside of this repo. Also displays active status.
+.BR [\-l, " " \-\-list\-packages] " " \fIREPO\fR
+List all packages inside of this repo. TODO: Also displays active status.
 .TP
-.BR \-L
+.BR [\-L, " " \-\-list\-repos]
 List all Repos.
 .TP
+.BR [\-R, " " \-\-refresh]
+Refreshes the deployment version of all packages. Selects appropriate file
+versions and applies patches in the
+.I sdss.secret
+file.
+.TP
+.BR [\-V, " " \-\-change\-version] " " \fIVERSION\fR
+Changes currently deployed file versions. Does not apply changes until manually
+refreshed with
 .BR \-R
-Refresh the data inside the data directory. Useful if custom repos are introduced to the dotfiles directory or some other external change has been made. KNOWN BUG: deleted repos might not disappear from list commands after refresh.
-.SH OPTIONS
+command.
 .TP
-.BR \-r " " \fIREPODIR\fR
-Sets the repo directory.
+.BR [\-f, " " \-\-get\-repos\-location]
+Returns the folder that contains all
+.B sdss
+repos.
 .TP
-.BR \-s " " \fIDATADIR\fR
-Sets the sdss data directory.
+.BR [\-F, " " \-\-get\-package\-location] " " \fIREPO\fR " " \fIPACKAGE\fR
+Get the working folder of given package.
 .SH DETAILS
 .PP
+All persistent configuration of
 .B sdss
-stores the repos inside of
-.I ${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles
-or
-.I $HOME/.dotfiles
-in that precedence. If the first folder exists, the sesecond one will be ignored. Some additional data is stored inside of
-.I ${XDG_DATA_HOME:-$HOME/.local/share}/sdss
-or
-.I $HOME/.sdss
-in that precedence, similarly to the repo directory. The data stored here keeps track of which packages are activated.
+is handled via the environment variables
+.I SDSS_DATA_DIR
+and
+.I SDSS_DEST_DIR
+\&.
 .PP
-The directory structure inside of the repo directory looks like this with
-.I ".dotfiles"
-being the repo directory):
-.I ".dotfiles/repo/package"
-\&. The content inside a package has to mirror the same folder structure that the package should have when installed into the home directory.
-.TP
-The data inside the data directory keeps track of activated packages for the purpose of listing them to the user.
+.I SDSS_DATA_DIR
+controls where
+.B sdss
+stores all of the repos and packages. The standard value of
+.I SDSS_DATA_DIR
+is
+.B ${XDG_DATA_HOME:-$HOME/.local/share}/sdss
+\&.
+.PP
+.I SDSS_DEST_DIR
+controls where
+.B sdss
+deploys dotfiles to. The standard value of
+.I SDSS_DEST_DIR
+is
+.B $HOME
+\&.
+.PP
+The file layout inside of is detailed in
+.BR \%sdss (5)
+\&.
+.PP
+.B sdss
+can also handle multiple versions of the same file and deploy them based on the
+currently active version as selected by the
+.BR \-V
+command. The naming scheme used to handle versioned files is detailed in
+.BR \%sdss (5)
+\&.
+.PP
+.B sdss
+can also handle storing data like passwords and API keys inside of a GPG
+encrypted file and inserting the encrypted data into the deployed files.
+.B sdss
+also handles the GPG en\-/decryption of the secret file. The layout of the file
+containing all the encrypted data is detailed in
+.BR \%sdss (5)
+\&.
