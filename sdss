@@ -49,9 +49,6 @@ commands = [
     ("-V", "--change-version",
      "Change version of a package.",
      "change_version", 1),
-    ("-e", "--toggle-edit-mode",
-     "Toggle edit mode.",
-     "toggle:edit", 0),
     ("-R", "--refresh",
      "Refreshes package database.",
      "refresh", 0),
@@ -68,17 +65,19 @@ commands = [
 
 SDSS_REPO_DIR_NAME  = "repos"
 SDSS_DATA_FILE_NAME = "sdss.data"
+SDSS_VER  = "CUR_VERSION"
 
 # GLOBAL VARS
 
 # TODO: Implement XDG Directories (aka XDG_DATA_HOME)
-SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR")\
-  is not None else "{}/.local/share/sdss".format(os.getenv("HOME"))
+if os.getenv("XDG_DATA_HOME") is None:
+    SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR")\
+        is not None else "{}/.local/share/sdss".format(os.getenv("HOME"))
+else:
+    SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR")\
+        is not None else "{}/sdss".format(os.getenv("XDG_DATA_HOME"))
 SDSS_DEST_DIR = os.getenv("SDSS_DEST_DIR") if os.getenv("SDSS_DEST_DIR")\
-  is not None else os.getenv("HOME")
-SDSS_EDIT_DIR = os.getenv("SDSS_EDIT_DIR") if os.getenv("SDSS_EDIT_DIR")\
-  is not None else "{}/dotfiles".format(os.getenv("HOME"))
-SDSS_VER  = "VERSION"
+    is not None else os.getenv("HOME")
 
 # CUSTOM EXCEPTIONS
 
@@ -380,7 +379,7 @@ def get_patches(segment):
         result_pairs.append((key, value))
     return (filename, result_pairs)
 
-def apply_secret_file(secret_file_dec, data_folder, deploy_folder):
+def apply_secret_file(secret_file_dec, deploy_folder):
     # list of patches to apply to files.
     # content format:
     # {filename: [(key1, val1), (key2, val2)]}
@@ -391,14 +390,14 @@ def apply_secret_file(secret_file_dec, data_folder, deploy_folder):
             cur_patches = get_patches(segment)
             patches[cur_patches[0]] = cur_patches[1]
     for filename in patches:
-        src_file_path = os.path.join(data_folder,   filename)
         dst_file_path = os.path.join(deploy_folder, filename)
-        with open(src_file_path, "r") as src_file:
+        content = ""
+        with open(dst_file_path, "r") as src_file:
             content = src_file.read()
             for patch in patches[filename]:
                 content = content.replace(patch[0], patch[1])
-            with open(dst_file_path, "w") as dst_file:
-                dst_file.write(content)
+        with open(dst_file_path, "w") as dst_file:
+            dst_file.write(content)
 
 # COMMAND FUNCTIONS
 
@@ -428,7 +427,7 @@ def refresh():
             refresh_deploy_files(package, data_folder, data_file,
                                  deploy_folder, current_version)
             if update_secrets_files(secret_file_enc, secret_file_dec):
-                apply_secret_file(secret_file_dec, data_folder, deploy_folder)
+                apply_secret_file(secret_file_dec, deploy_folder)
 
 
 def clone(arg):
@@ -545,8 +544,6 @@ if __name__ == "__main__":
         version()
     elif command == "change_version":
         change_version(arg)
-    elif command == "toggle_edit":
-        toggle_edit()
     elif command == "get_repo_folder":
         get_repo_folder()
     elif command == "get_package_folder":
