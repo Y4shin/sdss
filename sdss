@@ -301,16 +301,11 @@ def handle_versioned_file(key, data, data_folder, deploy_folder,
     #reenable if version matches again
     else:
         #see comment on `tmp_files = []`
-        if os.path.isfile(data.replace(data_folder, deploy_folder, 1)):
-            shutil.copy2("{}.{}.sdss".format(data, key.split(".")[1]),
-                         "{}..tmp".format(data.replace(data_folder,
-                                                       deploy_folder, 1)))
-            tmp_files.append(data.replace(data_folder, deploy_folder, 1) +
-                             "..tmp")
-        else:
-            src=data + ".{}.sdss".format(key.split(".")[1])
-            dst=data.replace(data_folder, deploy_folder, 1)
-            shutil.copy2(src, dst)
+        shutil.copy2("{}.{}.sdss".format(data, key.split(".")[1]),
+                     "{}..tmp".format(data.replace(data_folder,
+                                                   deploy_folder, 1)))
+        tmp_files.append(data.replace(data_folder, deploy_folder, 1) +
+                         "..tmp")
         new_lines.append(key.split(".")[0] + "." + key.split(".")[1] +
                          ".active" + "=" + data)
     return False
