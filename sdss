@@ -18,6 +18,8 @@ import errno
 import pathlib
 from datetime import datetime as dt
 import gnupg
+import logging
+import subprocess
 
 # CONSTANTS
 
@@ -69,7 +71,6 @@ SDSS_VER  = "CUR_VERSION"
 
 # GLOBAL VARS
 
-# TODO: Implement XDG Directories (aka XDG_DATA_HOME)
 if os.getenv("XDG_DATA_HOME") is None:
     SDSS_DATA_DIR = os.getenv("SDSS_DATA_DIR") if os.getenv("SDSS_DATA_DIR")\
         is not None else "{}/.local/share/sdss".format(os.getenv("HOME"))
@@ -91,6 +92,62 @@ class GPGEncException(GPGException):
     pass
 # HOUSEKEEPING FUNCTIONS
 
+def get_dist():
+    dist_files = {
+      "/etc/os-release": "ID="
+    }
+    for dist_file in dist_files:
+        with open(dist_file, "r") as dfile:
+            for line in dfile.readlines():
+                if line[:len(dist_files[dist_file])] == dist_files[dist_file]:
+                    return line[len(dist_files[dist_file]):-1]
+    return None
+
+# Source for this function:
+# https://github.com/peakwinter/python-pacman/blob/master/pacman.py
+def pacman(flags, pkgs=[], eflgs=[]):
+    # Subprocess wrapper, get all data
+    if not pkgs:
+        cmd = ["pacman", "--noconfirm", flags]
+    elif type(pkgs) == list:
+        cmd = ["pacman", "--noconfirm", flags]
+        cmd += [quote(s) for s in pkgs]
+    else:
+        cmd = ["pacman", "--noconfirm", flags, pkgs]
+    if eflgs and any(eflgs):
+        eflgs = [x for x in eflgs if x]
+        cmd += eflgs
+    p = subprocess.Popen(["sudo"] + cmd, stderr=subprocess.PIPE,
+                         stdout=subprocess.PIPE)
+    data = p.communicate()
+    data = {"code": p.returncode, "stdout": data[0].decode(),
+            "stderr": data[1].rstrip(b'\n').decode()}
+    return data
+
+
+def install_dependency(dependency, dist):
+    if dist == "arch":
+        logging.debug("Attempting to install Arch package {}."
+                      .format(dependency))
+        if pacman("-Q", dependency)["code"] != 0:
+            logging.debug("Package not installed, installing")
+            subp = subprocess.Popen(["yay", "-Sy", "--answerclean", "All",
+                                     "--answerdiff", "None", "--sudoflags",
+                                     "-A", dependency],
+                                    stderr=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stdin=subprocess.PIPE)
+            data = subp.communicate(input=(10*"yes\n").encode("ascii"))
+            p = {"code": subp.returncode, "stdout": data[0].decode(),
+                 "stderr": data[1].rstrip(b'\n').decode()}
+            if p["code"] == 0:
+                logging.info("Package {} installed."
+                             .format(dependency))
+            else:
+                logging.error("Package {} could not be installed: {}"
+                              .format(dependency, p["stderr"]))
+
+
 def getargs():
     """
 
@@ -99,6 +156,7 @@ def getargs():
       description="Stow Dotfiles Setup Script (SDSS). Please only provide one \
       command at a time.")
     for command in commands:
+        logging.debug("Adding command: " + str(command))
         if command[0] is not None:
             if command[4] > 0:
                 parser.add_argument(command[0], command[1], help=command[2],
@@ -120,7 +178,9 @@ def get_command(args):
     args_dict = vars(args)
     for com in commands:
         command = com[3]
-        if args_dict[command] is not None and (args_dict[command] == True or isinstance(args_dict[command], str) or isinstance(args_dict[command], list)):
+        if args_dict[command] is not None and\
+            (args_dict[command] == True or isinstance(args_dict[command], str)\
+            or isinstance(args_dict[command], list)):
             if activated_command is None:
                 activated_command = (command, args_dict[command])
             else:
@@ -407,7 +467,8 @@ def refresh():
     #getting all repos, appending full pathname and filtering only directories
     repos = [os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, name) for name in\
              os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME)) if\
-             os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, name))]
+             os.path.isdir(os.path.join(SDSS_DATA_DIR,
+                                        SDSS_REPO_DIR_NAME, name))]
     for repo in repos:
         #getting packages of repo, filtering for dotfiles and non-folders
         packages = [os.path.join(repo, name) for name in os.listdir(repo) if\
@@ -438,36 +499,64 @@ def clone(arg):
     else:
         print("Could not clone repo.")
 
-def activate_package(arg):
-    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0], arg[1])
+def activate_package(arg, dist):
+    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME,
+                               arg[0], arg[1])
     success=False
-    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
+    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r")\
+         as config_file:
         #check if active
         if [line for line in config_file.readlines() if\
             line.split("=")[0] == "state"][0].split("=")[1][:-1] == "inactive":
             success = os.system("stow -S {} -d {} -t {}".format(
               "deploy", package_dir, SDSS_DEST_DIR)) == 0
     if success:
+        try:
+            with open(os.path.join(package_dir, "sdss.deps"), "r") as dep_file:
+                for line in dep_file.readlines():
+                    dependency = {}
+                    for dist_dep in line[:-1].split(", "):
+                        dependency[dist_dep.split("=")[0]] =\
+                            dist_dep.split("=")[1]
+                    if dist in dependency:
+                        install_dependency(dependency[dist], dist)
+                    elif len(list(dependency)) == 0:
+                        continue
+                    else:
+                        logging.warning(("Dependency {0} has no install " +
+                                        "candidate on distro {1}.")
+                                        .format(dependency[list(dependency)[0]],
+                                                dist)
+                        )
+        except FileNotFoundError:
+            print(os.path.join(package_dir, "sdss.deps"))
+            pass
         text = ""
-        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r")\
+             as config_file:
             text = config_file.read().replace("state=inactive", "state=active")
-        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w")\
+             as config_file:
             config_file.write(text)
         print("Package {}/{} successfully activated.".format(arg[0], arg[1]))
     else:
         print("Package {}/{} failed to activate.".format(arg[0], arg[1]))
 
-def activate_repo(arg):
+def activate_repo(arg, dist):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR,
+                                            SDSS_REPO_DIR_NAME, arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR,
+                                               SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
-        activate_package([arg[0], package])
+        activate_package([arg[0], package], dist)
 
 def deactivate_package(arg):
-    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0], arg[1])
+    package_dir = os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME,
+                               arg[0], arg[1])
     success=False
-    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
+    with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r")\
+         as config_file:
         #check if active
         if [line for line in config_file.readlines() if\
             line.split("=")[0] == "state"][0].split("=")[1][:-1] == "active":
@@ -475,9 +564,11 @@ def deactivate_package(arg):
                 "deploy", package_dir, SDSS_DEST_DIR)) == 0
     if success:
         text = ""
-        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "r")\
+             as config_file:
             text = config_file.read().replace("state=active", "state=inactive")
-        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w") as config_file:
+        with open(os.path.join(package_dir, SDSS_DATA_FILE_NAME), "w")\
+             as config_file:
             config_file.write(text)
         print("Package {}/{} successfully deactivated.".format(arg[0], arg[1]))
     else:
@@ -485,23 +576,27 @@ def deactivate_package(arg):
 
 def deactivate_repo(arg):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME,
+                                            arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR,
+                                               SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
         deactivate_package([arg[0], package])
 
 def list_packages(arg):
     for package in [pkg for pkg in\
-                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0])) if\
-                    os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
+                    os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME,
+                                            arg[0])) if\
+                    os.path.isdir(os.path.join(SDSS_DATA_DIR,
+                                               SDSS_REPO_DIR_NAME, arg[0],
                                                pkg)) and pkg[0] != "."]:
         print(package)
 
 def list_repos():
     for repo in [pkg for pkg in\
                  os.listdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME)) if\
-                 os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME, arg[0],
-                                            pkg)) and pkg[0] != "."]:
+                 os.path.isdir(os.path.join(SDSS_DATA_DIR, SDSS_REPO_DIR_NAME,
+                                            arg[0], pkg)) and pkg[0] != "."]:
         print(repo)
 
 def version():
@@ -518,6 +613,7 @@ def get_package_folder(arg):
                                   arg[1], "data"))
 
 if __name__ == "__main__":
+    dist = get_dist()
     args = getargs()
     comm = get_command(args)
     if comm is None:
@@ -529,9 +625,9 @@ if __name__ == "__main__":
     elif command == "clone_repo":
         clone(arg)
     elif command == "a_package":
-        activate_package(arg)
+        activate_package(arg, dist)
     elif command == "a_repo":
-        activate_repo(arg)
+        activate_repo(arg, dist)
     elif command == "d_package":
         deactivate_package(arg)
     elif command == "d_repo":
