@@ -126,7 +126,7 @@ def pacman(flags, pkgs=[], eflgs=[]):
 
 
 def install_dependency(dependency, dist):
-    if dist == "arch":
+    if dist == "arch" or dist == "manjaro":
         logging.debug("Attempting to install Arch package {}."
                       .format(dependency))
         if pacman("-Q", dependency)["code"] != 0:
@@ -513,6 +513,8 @@ def activate_package(arg, dist):
                     for dist_dep in line[:-1].split(", "):
                         dependency[dist_dep.split("=")[0]] =\
                             dist_dep.split("=")[1]
+                    if "arch" in dependency:
+                        dependency["manjaro"] = dependency["arch"]
                     if dist in dependency:
                         install_dependency(dependency[dist], dist)
                     elif len(list(dependency)) == 0:
